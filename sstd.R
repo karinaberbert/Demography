@@ -15,13 +15,13 @@ install.packages('sidrar') #Working with Census Data from Brazil official databa
 install.packages("dplyr")
 install.packages("googledrive") #To further work with census data on Google Earth Engine (GEE), login to you Google account is needed
 
-#Installing libraries
+#Installing packages and libraries
 library(sidrar)
 library(dplyr)
 library(googledrive)
 
-#Google Drive Authentication step#
-drive_auth() #Remember to allow API to create, edit and delete files from your Google Drive
+#Google Drive Authentication
+drive_auth()
 
 #==========================================OBTAINING DATA========================================#
 #========================================OBTENÇÃO DE DADOS ====================================#
@@ -121,6 +121,10 @@ df_urban <- subset(df, household_situation == 'Urbana')
 
 #Calculating Linear Population Growth Rates for each municipality
 #Linear Population Growth Rates for projecting 2001 and 2021 (using 1991-2000 rate, and 2000-2010 rates, respectvely)
+
+#Formula Linear Population Growth Rate:
+#
+
 df_urban <- df_urban %>%
   group_by(municipality) %>%
   mutate(population_growth_rate_1991_2000 = (Population_count[year == 2000] - Population_count[year == 1991]) / (2000 - 1991))
@@ -129,6 +133,15 @@ df_urban <- df_urban %>%
   group_by(municipality) %>%
   mutate(population_growth_rate_2000_2010 = (Population_count[year == 2010] - Population_count[year == 2000]) / (2010 - 2000))
 
+#Convert "population_growth_rate_1991_2000" column to numeric
+df_urban$population_growth_rate_1991_2000 <- as.numeric(df_urban$population_growth_rate_1991_2000)
+# Reduce decimal values in "population_growth_rate_1991_2000" column to 1
+df_urban$population_growth_rate_1991_2000 <- round(df_urban$population_growth_rate_1991_2000, 1) 
+
+#Convert "population_growth_rate_2000_2010" column to numeric
+df_urban$population_growth_rate_2000_2010 <- as.numeric(df_urban$population_growth_rate_2000_2010)
+# Reduce decimal values in "population_growth_rate_2000_2010" column to 1
+df_urban$population_growth_rate_2000_2010 <- round(df_urban$population_growth_rate_2000_2010, 1)
 #View(df_urban)
 
 #Create a vector of unique municipalities
@@ -139,7 +152,7 @@ new_rows <- data.frame(municipality = municipalities,
                        territorial_level_code = df_urban$territorial_level_code[1],
                        territorial_level = rep("Município", length(municipalities)),
                        measurement_unit_code = df_urban$measurement_unit_code[1],
-                       geocode = rep("5100102", length(municipalities)),
+                       geocode = df_urban$geocode[1],
                        variable_code = df_urban$variable_code[1],
                        variable = df_urban$variable[1],
                        household_situation_code = df_urban$household_situation_code[1],
@@ -153,13 +166,31 @@ new_rows <- data.frame(municipality = municipalities,
 df_urban <- bind_rows(df_urban, new_rows) %>%
   arrange(municipality)
 
+#Create a new dataframe with one row 2011 for each municipality
+new_rows <- data.frame(municipality = municipalities,
+                       territorial_level_code = df_urban$territorial_level_code[1],
+                       territorial_level = rep("Município", length(municipalities)),
+                       measurement_unit_code = df_urban$measurement_unit_code[1],
+                       geocode = df_urban$geocode[1],
+                       variable_code = df_urban$variable_code[1],
+                       variable = df_urban$variable[1],
+                       household_situation_code = df_urban$household_situation_code[1],
+                       household_situation = df_urban$household_situation[1],
+                       measurement_unit = rep("Pessoas", length(municipalities)),
+                       year_code = rep("2011", length(municipalities)),
+                       year = rep("2011", length(municipalities)),
+                       Population_count = rep(NA, length(municipalities)))
+
+#Bind the new rows to the original dataframe
+df_urban <- bind_rows(df_urban, new_rows) %>%
+  arrange(municipality)
 
 #Create a new dataframe with one row 2021 for each municipality
 new_rows <- data.frame(municipality = municipalities,
                        territorial_level_code = df_urban$territorial_level_code[1],
                        territorial_level = rep("Município", length(municipalities)),
                        measurement_unit_code = df_urban$measurement_unit_code[1],
-                       geocode = rep("5100102", length(municipalities)),
+                       geocode = df_urban$geocode[1],
                        variable_code = df_urban$variable_code[1],
                        variable = df_urban$variable[1],
                        household_situation_code = df_urban$household_situation_code[1],
@@ -173,13 +204,11 @@ new_rows <- data.frame(municipality = municipalities,
 df_urban <- bind_rows(df_urban, new_rows) %>%
   arrange(municipality)
 
-#Convert "population_growth_rate_1991_2000" column to numeric
-df_urban$population_growth_rate_1991_2000 <- as.numeric(df_urban$population_growth_rate_1991_2000)
-# Reduce decimal values in "population_growth_rate_1991_2000" column to 1
-df_urban$population_growth_rate_1991_2000 <- round(df_urban$population_growth_rate_1991_2000, 1)
-
 #==========================================SLECTING THE DATA & POPULATION PROJECTIONS========================================#
 #========================================SELECIONANDO OS DADOS & REALIZANDO PROJEÇÃO POPULACIONAL====================================#
+
+#Formula of Linear population prjection:
+#
 
 #Group the dataframe by municipality and year (2000)
 df_urban_grouped <- df_urban %>%
@@ -201,9 +230,24 @@ df_urban_grouped <- df_urban %>%
   filter(year == 2010) %>%
   group_by(municipality)
 
-#Calculate the new population counts for each municipality in 2001
+#Calculate the new population counts for each municipality in 2011
 new_population_counts <- df_urban_grouped %>%
-  summarize(new_population_count = (Population_count + population_growth_rate_1991_2000 * (2010 - 2000)))
+  summarize(new_population_count = (Population_count + population_growth_rate_2000_2010 * (2011 - 2010)))
+
+#Join the new_population_counts dataframe with the original dataframe
+df_urban <- df_urban %>%
+  left_join(new_population_counts, by = "municipality") %>%
+  mutate(Population_count = if_else(year == 2011, new_population_count, Population_count)) %>%
+  select(-new_population_count)
+
+#Group the dataframe by municipality and year (2010)
+df_urban_grouped <- df_urban %>%
+  filter(year == 2010) %>%
+  group_by(municipality)
+
+#Calculate the new population counts for each municipality in 2021
+new_population_counts <- df_urban_grouped %>%
+  summarize(new_population_count = (Population_count + population_growth_rate_2000_2010 * (2021 - 2010)))
 
 #Join the new_population_counts dataframe with the original dataframe
 df_urban <- df_urban %>%
